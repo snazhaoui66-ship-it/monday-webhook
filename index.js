@@ -6,15 +6,23 @@ import dotenv from "dotenv";
 dotenv.config();
 
 // =========================
+// EXPRESS INIT (OBLIGATOIRE EN PREMIER)
+// =========================
+const app = express();
+
+// 🔴 OBLIGATOIRE POUR RAILWAY / MONDAY
+app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
+
+// =========================
 // CONFIG GÉNÉRALE (RAILWAY SAFE)
 // =========================
-const PORT = process.env.PORT || 3000; // ⚠️ Railway injecte PORT
+const PORT = process.env.PORT || 3000;
 const MONDAY_API_URL = "https://api.monday.com/v2";
 
 const API_KEY = process.env.MONDAY_API_KEY;
 const BOARD_ID = process.env.BOARD_ID;
 
-// Sécurité minimale
 if (!API_KEY || !BOARD_ID) {
   console.error("❌ VARIABLES D'ENV MANQUANTES (MONDAY_API_KEY ou BOARD_ID)");
   process.exit(1);
@@ -131,19 +139,27 @@ async function handleCINChange(triggerItemId, triggerValue) {
 }
 
 // =========================
-// EXPRESS SERVER
+// ROUTES
 // =========================
-const app = express();
-app.use(express.json());
 
-// ✅ ROUTE HEALTH (OBLIGATOIRE)
+// ✅ ROUTE RACINE (TEST TRAFIC RAILWAY)
+app.get("/", (req, res) => {
+  console.log("👋 HIT /");
+  res.send("OK ROOT");
+});
+
+// ✅ ROUTE HEALTH
 app.get("/health", (req, res) => {
   res.status(200).send("OK");
 });
 
-// ✅ WEBHOOK MONDAY
+// ✅ WEBHOOK MONDAY (VERBOSE)
 app.post("/webhook/monday", async (req, res) => {
   try {
+    console.log("🔥 WEBHOOK MONDAY HIT");
+    console.log("Headers:", req.headers);
+    console.log("Body:", req.body);
+
     const payload = req.body;
 
     const itemId =
@@ -154,7 +170,7 @@ app.post("/webhook/monday", async (req, res) => {
     const value = Number(payload.event?.value);
 
     if (columnId === COL_CIN && itemId && !Number.isNaN(value)) {
-      console.log(`🎯 Webhook Monday → Item ${itemId} | CIN = ${value}`);
+      console.log(`🎯 CIN CHANGE → Item ${itemId} | CIN = ${value}`);
       await handleCINChange(itemId, value);
     }
 
