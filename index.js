@@ -26,7 +26,7 @@ if (!API_KEY || !BOARD_ID) {
 }
 
 // Colonnes
-const COL_FORM = "numeric_mm0d85cp"; // colonne résultat
+const COL_FORM = "numeric_mm0d85cp"; // résultat
 const COL_TEXT = "text_mm0d8v52";    // déclencheur
 
 // =========================
@@ -78,6 +78,11 @@ async function updateNumeric(itemId, value) {
 }
 
 // =========================
+// GLOBAL FLAG (UNE SEULE FOIS)
+// =========================
+let INITIAL_STATE_LOGGED = false;
+
+// =========================
 // LOGIQUE PRINCIPALE
 // =========================
 async function handleTextTrigger(triggerItemId, addedValue) {
@@ -102,16 +107,17 @@ async function handleTextTrigger(triggerItemId, addedValue) {
   const res = await axiosMonday.post("", { query });
   const items = res.data.data.boards[0].items_page.items;
 
-  // 🔎 LOG INITIAL — UNE SEULE FOIS
-  console.log("📊 ÉTAT AVANT MODIFICATION");
-  for (const item of items) {
-    const formVal = getNumeric(item, COL_FORM);
-    const textVal = getText(item, COL_TEXT);
-    console.log(
-      `• ${item.name} | COL_FORM=${formVal} | COL_TEXT="${textVal}"`
-    );
+  // 🔎 LOG AVANT MODIFICATION — UNE SEULE FOIS
+  if (!INITIAL_STATE_LOGGED) {
+    console.log("\n📊 ===== ÉTAT INITIAL DU BOARD (AVANT MODIFICATION) =====");
+    for (const item of items) {
+      console.log(
+        `• ${item.name} | COL_FORM=${getNumeric(item, COL_FORM)} | COL_TEXT="${getText(item, COL_TEXT)}"`
+      );
+    }
+    console.log("📊 ===== FIN ÉTAT INITIAL =====\n");
+    INITIAL_STATE_LOGGED = true;
   }
-  console.log("📊 FIN ÉTAT INITIAL\n");
 
   // 🔁 TRAITEMENT
   for (const item of items) {
@@ -136,17 +142,15 @@ app.get("/health", (req, res) => res.send("OK"));
 
 app.post("/webhook/monday", async (req, res) => {
   try {
-    console.log("📩 Webhook reçu :", JSON.stringify(req.body, null, 2));
+    console.log("\n📩 WEBHOOK REÇU (BRUT) :");
+    console.log(JSON.stringify(req.body, null, 2));
 
-    // ✅ VALIDATION MONDAY (OBLIGATOIRE)
+    // ✅ VALIDATION MONDAY
     if (req.body.challenge) {
       console.log("🟢 Challenge Monday détecté");
-      return res.status(200).json({
-        challenge: req.body.challenge
-      });
+      return res.status(200).json({ challenge: req.body.challenge });
     }
 
-    // 🔁 Webhook normal
     const payload = req.body;
 
     const itemId =
@@ -154,16 +158,25 @@ app.post("/webhook/monday", async (req, res) => {
       payload.event?.itemId;
 
     const columnId = payload.event?.columnId;
-    const value = Number(payload.event?.value);
 
-    if (columnId === COL_TEXT && itemId && !Number.isNaN(value)) {
-      console.log(`🎯 TRIGGER COL_TEXT → Item ${itemId} | +${value}`);
-      await handleTextTrigger(itemId, value);
+    // ⚠️ TEXT column → valeur souvent dans value.label / text
+    const rawValue =
+      payload.event?.value?.label ||
+      payload.event?.value ||
+      payload.event?.text;
+
+    const numericValue = Number(rawValue);
+
+    console.log(`🧪 EVENT PARSING → column=${columnId} | raw="${rawValue}" | num=${numericValue}`);
+
+    if (columnId === COL_TEXT && itemId && !Number.isNaN(numericValue)) {
+      console.log(`🎯 TRIGGER OK → Item ${itemId} | +${numericValue}`);
+      await handleTextTrigger(itemId, numericValue);
     }
 
     res.status(200).send("OK");
   } catch (err) {
-    console.error("💥 ERREUR :", err);
+    console.error("💥 ERREUR WEBHOOK :", err);
     res.status(500).send("Error");
   }
 });
