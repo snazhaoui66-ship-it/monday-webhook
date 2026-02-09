@@ -136,6 +136,17 @@ app.get("/health", (req, res) => res.send("OK"));
 
 app.post("/webhook/monday", async (req, res) => {
   try {
+    console.log("📩 Webhook reçu :", JSON.stringify(req.body, null, 2));
+
+    // ✅ VALIDATION MONDAY (OBLIGATOIRE)
+    if (req.body.challenge) {
+      console.log("🟢 Challenge Monday détecté");
+      return res.status(200).json({
+        challenge: req.body.challenge
+      });
+    }
+
+    // 🔁 Webhook normal
     const payload = req.body;
 
     const itemId =
