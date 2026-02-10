@@ -11,6 +11,26 @@ const app = express();
 app.use(express.json());
 
 // =========================
+// LOGGER GLOBAL HARDCORE (OBLIGATOIRE)
+// =========================
+app.use((req, res, next) => {
+  const msg = `
+🔥🔥🔥 REQUEST INTERCEPTED 🔥🔥🔥
+METHOD : ${req.method}
+URL    : ${req.originalUrl}
+HEADERS: ${JSON.stringify(req.headers)}
+BODY   : ${JSON.stringify(req.body)}
+-------------------------------
+`;
+
+  // Railway-proof logs
+  process.stdout.write(msg + "\n");
+  console.error(msg);
+
+  next();
+});
+
+// =========================
 // CONFIG
 // =========================
 const PORT = process.env.PORT || 3000;
@@ -132,12 +152,9 @@ async function handleTextTrigger(triggerItemId, addedValue) {
 app.get("/", (req, res) => res.send("OK"));
 app.get("/health", (req, res) => res.send("OK"));
 
-/**
- * ✅ WEBHOOK MONDAY — VERSION ROBUSTE
- * ➜ compatible Numbers
- * ➜ logs garantis
- * ➜ validation challenge OK
- */
+// =========================
+// WEBHOOK MONDAY
+// =========================
 app.post("/webhook/monday", (req, res) => {
   console.log("\n📩 WEBHOOK REÇU (BRUT)");
   console.log(JSON.stringify(req.body, null, 2));
@@ -148,7 +165,7 @@ app.post("/webhook/monday", (req, res) => {
     return res.status(200).json({ challenge: req.body.challenge });
   }
 
-  // ⚡ Réponse immédiate (OBLIGATOIRE)
+  // ⚡ Réponse immédiate
   res.status(200).send("OK");
 
   const event = req.body.event;
@@ -163,7 +180,6 @@ app.post("/webhook/monday", (req, res) => {
     return;
   }
 
-  // 🧠 Parsing robuste de la valeur Numbers
   let numericValue = NaN;
 
   try {
@@ -181,34 +197,31 @@ app.post("/webhook/monday", (req, res) => {
     `🧪 EVENT → item=${itemId} | value=${event.value} | parsed=${numericValue}`
   );
 
-  // ✅ TON BLOC EXACTEMENT ICI
   if (!Number.isNaN(numericValue)) {
     console.log(`🎯 TRIGGER CONFIRMÉ → Item ${itemId}`);
     handleTextTrigger(itemId, numericValue);
   }
 });
 
-
 // =========================
-// DEBUG ENDPOINT (ULTIME)
+// DEBUG ENDPOINT (FORCÉ)
 // =========================
 app.all("/debug", (req, res) => {
-  console.log("\n🧨 ===== DEBUG ENDPOINT HIT =====");
-  console.log("➡️ METHOD :", req.method);
-  console.log("➡️ URL    :", req.originalUrl);
-  console.log("➡️ HEADERS:", JSON.stringify(req.headers, null, 2));
-  console.log("➡️ BODY   :", JSON.stringify(req.body, null, 2));
-  console.log("➡️ QUERY  :", JSON.stringify(req.query, null, 2));
-  console.log("🧨 ===== END DEBUG =====\n");
+  const msg = `
+🧨🧨🧨 DEBUG ENDPOINT HIT 🧨🧨🧨
+METHOD : ${req.method}
+URL    : ${req.originalUrl}
+HEADERS: ${JSON.stringify(req.headers)}
+BODY   : ${JSON.stringify(req.body)}
+QUERY  : ${JSON.stringify(req.query)}
+🧨🧨🧨 END DEBUG 🧨🧨🧨
+`;
 
-  res.status(200).json({
-    ok: true,
-    method: req.method,
-    body: req.body ?? null,
-    query: req.query ?? null
-  });
+  process.stdout.write(msg + "\n");
+  console.error(msg);
+
+  res.status(200).json({ ok: true });
 });
-
 
 // =========================
 // START
