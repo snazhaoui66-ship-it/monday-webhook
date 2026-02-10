@@ -9,7 +9,6 @@ dotenv.config();
 // =========================
 const app = express();
 app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
 
 // =========================
 // CONFIG
@@ -26,8 +25,9 @@ if (!API_KEY || !BOARD_ID) {
 }
 
 // Colonnes
-const COL_FORM = "numeric_mm0d85cp"; // résultat
-const COL_TEXT = "text_mm0d8v52";    // déclencheur
+const COL_FORM = "numeric_mm0d85cp";     // résultat
+const COL_TEXT = "text_mm0d8v52";        // texte (lecture)
+const COL_TRIGGER = "numeric_mm0dya1d";  // Numbers déclencheur
 
 // =========================
 // AXIOS MONDAY
@@ -49,16 +49,14 @@ function getNumeric(item, colId) {
   if (!col) return 0;
 
   try {
-    const parsed = JSON.parse(col.value);
-    return parsed?.number ?? 0;
+    return JSON.parse(col.value)?.number ?? 0;
   } catch {
     return Number(col.text.replace(/[^\d.-]/g, "")) || 0;
   }
 }
 
 function getText(item, colId) {
-  const col = item.column_values.find(c => c.id === colId);
-  return col?.text ?? "";
+  return item.column_values.find(c => c.id === colId)?.text ?? "";
 }
 
 async function updateNumeric(itemId, value) {
@@ -69,16 +67,14 @@ async function updateNumeric(itemId, value) {
         item_id: ${itemId},
         column_id: "${COL_FORM}",
         value: "${Number(value)}"
-      ) {
-        id
-      }
+      ) { id }
     }
   `;
   await axiosMonday.post("", { query: mutation });
 }
 
 // =========================
-// GLOBAL FLAG (UNE SEULE FOIS)
+// FLAG GLOBAL (UNE SEULE FOIS)
 // =========================
 let INITIAL_STATE_LOGGED = false;
 
@@ -93,11 +89,7 @@ async function handleTextTrigger(triggerItemId, addedValue) {
           items {
             id
             name
-            column_values {
-              id
-              text
-              value
-            }
+            column_values { id text value }
           }
         }
       }
@@ -107,7 +99,7 @@ async function handleTextTrigger(triggerItemId, addedValue) {
   const res = await axiosMonday.post("", { query });
   const items = res.data.data.boards[0].items_page.items;
 
-  // 🔎 LOG AVANT MODIFICATION — UNE SEULE FOIS
+  // 🔎 LOG INITIAL — UNE SEULE FOIS
   if (!INITIAL_STATE_LOGGED) {
     console.log("\n📊 ===== ÉTAT INITIAL DU BOARD (AVANT MODIFICATION) =====");
     for (const item of items) {
@@ -119,14 +111,14 @@ async function handleTextTrigger(triggerItemId, addedValue) {
     INITIAL_STATE_LOGGED = true;
   }
 
-  // 🔁 TRAITEMENT
+  // 🔁 LOGIQUE MÉTIER
   for (const item of items) {
     if (item.id === triggerItemId) {
-      const previous = getNumeric(item, COL_FORM);
-      const newTotal = previous + addedValue;
+      const prev = getNumeric(item, COL_FORM);
+      const total = prev + addedValue;
 
-      await updateNumeric(item.id, newTotal);
-      console.log(`➕ ${item.name} : ${previous} + ${addedValue} = ${newTotal}`);
+      await updateNumeric(item.id, total);
+      console.log(`➕ ${item.name} : ${prev} + ${addedValue} = ${total}`);
     } else {
       await updateNumeric(item.id, 0);
       console.log(`🔁 RESET ${item.name} → 0`);
@@ -140,46 +132,83 @@ async function handleTextTrigger(triggerItemId, addedValue) {
 app.get("/", (req, res) => res.send("OK"));
 app.get("/health", (req, res) => res.send("OK"));
 
-app.post("/webhook/monday", async (req, res) => {
+/**
+ * ✅ WEBHOOK MONDAY — VERSION ROBUSTE
+ * ➜ compatible Numbers
+ * ➜ logs garantis
+ * ➜ validation challenge OK
+ */
+app.post("/webhook/monday", (req, res) => {
+  console.log("\n📩 WEBHOOK REÇU (BRUT)");
+  console.log(JSON.stringify(req.body, null, 2));
+
+  // ✅ Validation Monday
+  if (req.body.challenge) {
+    console.log("🟢 Challenge Monday détecté");
+    return res.status(200).json({ challenge: req.body.challenge });
+  }
+
+  // ⚡ Réponse immédiate (OBLIGATOIRE)
+  res.status(200).send("OK");
+
+  const event = req.body.event;
+  if (!event) {
+    console.log("⚠️ Aucun event reçu");
+    return;
+  }
+
+  const itemId = event.itemId || event.pulseId;
+  if (!itemId) {
+    console.log("⚠️ Aucun itemId");
+    return;
+  }
+
+  // 🧠 Parsing robuste de la valeur Numbers
+  let numericValue = NaN;
+
   try {
-    console.log("\n📩 WEBHOOK REÇU (BRUT) :");
-    console.log(JSON.stringify(req.body, null, 2));
-
-    // ✅ VALIDATION MONDAY
-    if (req.body.challenge) {
-      console.log("🟢 Challenge Monday détecté");
-      return res.status(200).json({ challenge: req.body.challenge });
+    if (typeof event.value === "string") {
+      const parsed = JSON.parse(event.value);
+      numericValue = Number(parsed?.number);
+    } else if (typeof event.value === "number") {
+      numericValue = event.value;
     }
+  } catch {
+    console.log("❌ Erreur parsing value");
+  }
 
-    const payload = req.body;
+  console.log(
+    `🧪 EVENT → item=${itemId} | value=${event.value} | parsed=${numericValue}`
+  );
 
-    const itemId =
-      payload.event?.pulseId ||
-      payload.event?.itemId;
-
-    const columnId = payload.event?.columnId;
-
-    // ⚠️ TEXT column → valeur souvent dans value.label / text
-    const rawValue =
-      payload.event?.value?.label ||
-      payload.event?.value ||
-      payload.event?.text;
-
-    const numericValue = Number(rawValue);
-
-    console.log(`🧪 EVENT PARSING → column=${columnId} | raw="${rawValue}" | num=${numericValue}`);
-
-    if (columnId === COL_TEXT && itemId && !Number.isNaN(numericValue)) {
-      console.log(`🎯 TRIGGER OK → Item ${itemId} | +${numericValue}`);
-      await handleTextTrigger(itemId, numericValue);
-    }
-
-    res.status(200).send("OK");
-  } catch (err) {
-    console.error("💥 ERREUR WEBHOOK :", err);
-    res.status(500).send("Error");
+  // ✅ TON BLOC EXACTEMENT ICI
+  if (!Number.isNaN(numericValue)) {
+    console.log(`🎯 TRIGGER CONFIRMÉ → Item ${itemId}`);
+    handleTextTrigger(itemId, numericValue);
   }
 });
+
+
+// =========================
+// DEBUG ENDPOINT (ULTIME)
+// =========================
+app.all("/debug", (req, res) => {
+  console.log("\n🧨 ===== DEBUG ENDPOINT HIT =====");
+  console.log("➡️ METHOD :", req.method);
+  console.log("➡️ URL    :", req.originalUrl);
+  console.log("➡️ HEADERS:", JSON.stringify(req.headers, null, 2));
+  console.log("➡️ BODY   :", JSON.stringify(req.body, null, 2));
+  console.log("➡️ QUERY  :", JSON.stringify(req.query, null, 2));
+  console.log("🧨 ===== END DEBUG =====\n");
+
+  res.status(200).json({
+    ok: true,
+    method: req.method,
+    body: req.body ?? null,
+    query: req.query ?? null
+  });
+});
+
 
 // =========================
 // START
