@@ -11,22 +11,19 @@ const app = express();
 app.use(express.json());
 
 // =========================
-// LOGGER GLOBAL HARDCORE (OBLIGATOIRE)
+// GLOBAL LOGGER
 // =========================
 app.use((req, res, next) => {
   const msg = `
-🔥🔥🔥 REQUEST INTERCEPTED 🔥🔥🔥
+🔥 REQUEST INTERCEPTED 🔥
 METHOD : ${req.method}
 URL    : ${req.originalUrl}
 HEADERS: ${JSON.stringify(req.headers)}
-BODY   : ${JSON.stringify(req.body)}
+BODY   : ${JSON.stringify(req.body, null, 2)}
 -------------------------------
 `;
-
-  // Railway-proof logs
   process.stdout.write(msg + "\n");
   console.error(msg);
-
   next();
 });
 
@@ -35,7 +32,6 @@ BODY   : ${JSON.stringify(req.body)}
 // =========================
 const PORT = process.env.PORT || 3000;
 const MONDAY_API_URL = "https://api.monday.com/v2";
-
 const API_KEY = process.env.MONDAY_API_KEY;
 const BOARD_ID = process.env.BOARD_ID;
 
@@ -67,11 +63,10 @@ const axiosMonday = axios.create({
 function getNumeric(item, colId) {
   const col = item.column_values.find(c => c.id === colId);
   if (!col) return 0;
-
   try {
     return JSON.parse(col.value)?.number ?? 0;
   } catch {
-    return Number(col.text.replace(/[^\d.-]/g, "")) || 0;
+    return Number(col.text?.replace(/[^\d.-]/g, "")) || 0;
   }
 }
 
@@ -94,7 +89,7 @@ async function updateNumeric(itemId, value) {
 }
 
 // =========================
-// FLAG GLOBAL (UNE SEULE FOIS)
+// FLAG GLOBAL
 // =========================
 let INITIAL_STATE_LOGGED = false;
 
@@ -102,47 +97,49 @@ let INITIAL_STATE_LOGGED = false;
 // LOGIQUE PRINCIPALE
 // =========================
 async function handleTextTrigger(triggerItemId, addedValue) {
-  const query = `
-    query {
-      boards(ids: ${BOARD_ID}) {
-        items_page(limit: 500) {
-          items {
-            id
-            name
-            column_values { id text value }
+  try {
+    const query = `
+      query {
+        boards(ids: ${BOARD_ID}) {
+          items_page(limit: 500) {
+            items {
+              id
+              name
+              column_values { id text value }
+            }
           }
         }
       }
+    `;
+    const res = await axiosMonday.post("", { query });
+    const items = res.data.data.boards[0].items_page.items;
+
+    // 🔎 Log initial
+    if (!INITIAL_STATE_LOGGED) {
+      console.log("\n📊 ===== ÉTAT INITIAL DU BOARD =====");
+      items.forEach(item => {
+        console.log(
+          `• ${item.name} | COL_FORM=${getNumeric(item, COL_FORM)} | COL_TEXT="${getText(item, COL_TEXT)}"`
+        );
+      });
+      console.log("📊 ===== FIN ÉTAT INITIAL =====\n");
+      INITIAL_STATE_LOGGED = true;
     }
-  `;
 
-  const res = await axiosMonday.post("", { query });
-  const items = res.data.data.boards[0].items_page.items;
-
-  // 🔎 LOG INITIAL — UNE SEULE FOIS
-  if (!INITIAL_STATE_LOGGED) {
-    console.log("\n📊 ===== ÉTAT INITIAL DU BOARD (AVANT MODIFICATION) =====");
+    // 🔁 Logique métier
     for (const item of items) {
-      console.log(
-        `• ${item.name} | COL_FORM=${getNumeric(item, COL_FORM)} | COL_TEXT="${getText(item, COL_TEXT)}"`
-      );
+      if (item.id === triggerItemId) {
+        const prev = getNumeric(item, COL_FORM);
+        const total = prev + addedValue;
+        await updateNumeric(item.id, total);
+        console.log(`➕ ${item.name} : ${prev} + ${addedValue} = ${total}`);
+      } else {
+        await updateNumeric(item.id, 0);
+        console.log(`🔁 RESET ${item.name} → 0`);
+      }
     }
-    console.log("📊 ===== FIN ÉTAT INITIAL =====\n");
-    INITIAL_STATE_LOGGED = true;
-  }
-
-  // 🔁 LOGIQUE MÉTIER
-  for (const item of items) {
-    if (item.id === triggerItemId) {
-      const prev = getNumeric(item, COL_FORM);
-      const total = prev + addedValue;
-
-      await updateNumeric(item.id, total);
-      console.log(`➕ ${item.name} : ${prev} + ${addedValue} = ${total}`);
-    } else {
-      await updateNumeric(item.id, 0);
-      console.log(`🔁 RESET ${item.name} → 0`);
-    }
+  } catch (err) {
+    console.error("❌ ERREUR handleTextTrigger :", err.message);
   }
 }
 
@@ -153,13 +150,13 @@ app.get("/", (req, res) => res.send("OK"));
 app.get("/health", (req, res) => res.send("OK"));
 
 // =========================
-// WEBHOOK MONDAY
+// WEBHOOK MONDAY ULTRA-ROBUSTE
 // =========================
-app.post("/webhook/monday", (req, res) => {
-  console.log("\n📩 WEBHOOK REÇU (BRUT)");
+app.post("/webhook/monday", async (req, res) => {
+  console.log("\n📩 WEBHOOK CRU (BRUT) :");
   console.log(JSON.stringify(req.body, null, 2));
 
-  // ✅ Validation Monday
+  // ✅ Challenge Monday
   if (req.body.challenge) {
     console.log("🟢 Challenge Monday détecté");
     return res.status(200).json({ challenge: req.body.challenge });
@@ -168,55 +165,68 @@ app.post("/webhook/monday", (req, res) => {
   // ⚡ Réponse immédiate
   res.status(200).send("OK");
 
-  const event = req.body.event;
+  // 🔍 Extraction robuste de l’event
+  const body = req.body || {};
+  const event = body.event || body.data || body; // fallback
   if (!event) {
-    console.log("⚠️ Aucun event reçu");
+    console.log("⚠️ Aucun event détecté dans le body");
     return;
   }
 
-  const itemId = event.itemId || event.pulseId;
+  // Extraction itemId robuste
+  const itemId =
+    event.itemId ||
+    event.pulseId ||
+    event.data?.id ||
+    event.id ||
+    event.pulse?.id ||
+    null;
+
   if (!itemId) {
-    console.log("⚠️ Aucun itemId");
+    console.log("⚠️ Aucun itemId détecté dans l'event :", event);
     return;
   }
 
+  // Extraction valeur robuste
   let numericValue = NaN;
-
   try {
     if (typeof event.value === "string") {
       const parsed = JSON.parse(event.value);
-      numericValue = Number(parsed?.number);
+      numericValue = Number(parsed?.number ?? parsed ?? NaN);
     } else if (typeof event.value === "number") {
       numericValue = event.value;
+    } else if (event.value && typeof event.value === "object") {
+      numericValue = Number(event.value.number ?? event.value);
     }
-  } catch {
-    console.log("❌ Erreur parsing value");
+  } catch (err) {
+    console.log("❌ Erreur parsing value :", err.message);
   }
 
   console.log(
-    `🧪 EVENT → item=${itemId} | value=${event.value} | parsed=${numericValue}`
+    `🧪 EVENT → item=${itemId} | raw=${JSON.stringify(event.value)} | parsed=${numericValue}`
   );
 
   if (!Number.isNaN(numericValue)) {
     console.log(`🎯 TRIGGER CONFIRMÉ → Item ${itemId}`);
-    handleTextTrigger(itemId, numericValue);
+    await handleTextTrigger(itemId, numericValue);
+  } else {
+    console.log("⚠️ Valeur non numérique ignorée");
   }
 });
 
 // =========================
-// DEBUG ENDPOINT (FORCÉ)
+// DEBUG ENDPOINT
 // =========================
 app.all("/debug", (req, res) => {
   const msg = `
-🧨🧨🧨 DEBUG ENDPOINT HIT 🧨🧨🧨
+🧨 DEBUG ENDPOINT HIT 🧨
 METHOD : ${req.method}
 URL    : ${req.originalUrl}
 HEADERS: ${JSON.stringify(req.headers)}
-BODY   : ${JSON.stringify(req.body)}
+BODY   : ${JSON.stringify(req.body, null, 2)}
 QUERY  : ${JSON.stringify(req.query)}
-🧨🧨🧨 END DEBUG 🧨🧨🧨
+🧨 END DEBUG 🧨
 `;
-
   process.stdout.write(msg + "\n");
   console.error(msg);
 
