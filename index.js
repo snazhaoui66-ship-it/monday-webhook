@@ -4,11 +4,12 @@ import dotenv from "dotenv";
 
 dotenv.config();
 
-// 🚀 Signature unique du container
-const SERVER_INSTANCE_ID = Date.now();
-console.log("🚀 SERVER INSTANCE ID:", SERVER_INSTANCE_ID);
+// =========================
+// INSTANCE ID UNIQUE POUR RAILWAY
+// =========================
+const INSTANCE_ID = Date.now();
+console.log("🚀 SERVER INSTANCE ID:", INSTANCE_ID);
 
-// Variables d'environnement
 const MONDAY_API_KEY = process.env.MONDAY_API_KEY;
 const BOARD_ID = process.env.BOARD_ID;
 const PORT = process.env.PORT || 8080;
@@ -18,6 +19,11 @@ console.log("ENV BOARD_ID:", !!BOARD_ID);
 console.log("ENV PORT:", PORT);
 console.log("BOARD_ID ACTUEL:", BOARD_ID);
 
+if (!MONDAY_API_KEY || !BOARD_ID) {
+  console.error("❌ VARIABLES D'ENV MANQUANTES");
+  process.exit(1);
+}
+
 // =========================
 // EXPRESS INIT
 // =========================
@@ -25,39 +31,38 @@ const app = express();
 app.use(express.json());
 
 // =========================
-// DEBUG CATCH-ALL REQUEST LOGGER
+// COLD START LOGGER
 // =========================
-app.use((req, res, next) => {
-  console.log("\n🔥 REQUÊTE ENTRANTE 🔥");
-  console.log("METHOD:", req.method);
-  console.log("URL   :", req.originalUrl);
-  console.log("HEADERS:", JSON.stringify(req.headers, null, 2));
-  console.log("BODY   :", JSON.stringify(req.body, null, 2));
-  console.log("-----------------------------\n");
-  next();
-});
+let isColdStart = true;
+const queuedRequests = [];
+
+function logColdStart(req) {
+  const timestamp = new Date().toISOString();
+  const logMsg = `
+🧊 [COLD START QUEUE] ${timestamp}
+METHOD: ${req.method}
+URL   : ${req.originalUrl}
+HEADERS: ${JSON.stringify(req.headers)}
+BODY   : ${JSON.stringify(req.body, null, 2)}
+-----------------------------
+`;
+  console.log(logMsg);
+}
 
 // =========================
-// CONFIG MONDAY
+// AXIOS MONDAY
 // =========================
-const MONDAY_API_URL = "https://api.monday.com/v2";
 const axiosMonday = axios.create({
-  baseURL: MONDAY_API_URL,
+  baseURL: "https://api.monday.com/v2",
   timeout: 15000,
   headers: {
-    Authorization: MONDAY_API_KEY || "",
+    Authorization: MONDAY_API_KEY,
     "Content-Type": "application/json",
   },
 });
 
-// Colonnes
-const COL_FORM = "numeric_mm0d85cp";
-const COL_TEXT = "text_mm0d8v52";
-const COL_TRIGGER = "numeric_mm0dya1d";
-const COL_SALAIRE = "numeric_mm0fkbs";
-
 // =========================
-// HELPERS
+// UTILS
 // =========================
 function getNumeric(item, colId) {
   const col = item.column_values.find(c => c.id === colId);
@@ -74,31 +79,24 @@ function getText(item, colId) {
 }
 
 async function updateSalaire(itemId, value) {
-  try {
-    const mutation = `
-      mutation {
-        change_simple_column_value(
-          board_id: ${BOARD_ID},
-          item_id: ${itemId},
-          column_id: "${COL_SALAIRE}",
-          value: "${Number(value)}"
-        ) { id }
-      }
-    `;
-    await axiosMonday.post("", { query: mutation });
-  } catch (err) {
-    console.error("❌ ERREUR updateSalaire:", err.message);
-  }
+  const mutation = `
+    mutation {
+      change_simple_column_value(
+        board_id: ${BOARD_ID},
+        item_id: ${itemId},
+        column_id: "numeric_mm0fkbs",
+        value: "${Number(value)}"
+      ) { id }
+    }
+  `;
+  await axiosMonday.post("", { query: mutation });
 }
-
-// =========================
-// FLAG LOG UNIQUE
-// =========================
-let INITIAL_STATE_LOGGED = false;
 
 // =========================
 // LOGIQUE PRINCIPALE SALAIRE
 // =========================
+let INITIAL_STATE_LOGGED = false;
+
 async function handleSalaireTrigger(triggerItemId, addedValue) {
   try {
     const query = `
@@ -114,7 +112,6 @@ async function handleSalaireTrigger(triggerItemId, addedValue) {
         }
       }
     `;
-
     const res = await axiosMonday.post("", { query });
     const items = res.data.data.boards[0].items_page.items;
 
@@ -122,7 +119,7 @@ async function handleSalaireTrigger(triggerItemId, addedValue) {
       console.log("\n📊 ===== ÉTAT INITIAL DU BOARD =====");
       items.forEach(item => {
         console.log(
-          `• ${item.name} | FORM=${getNumeric(item, COL_FORM)} | TEXT="${getText(item, COL_TEXT)}" | TRIGGER=${getNumeric(item, COL_TRIGGER)} | SALAIRE=${getNumeric(item, COL_SALAIRE)}`
+          `• ${item.name} | FORM=${getNumeric(item, "numeric_mm0d85cp")} | TEXT="${getText(item, "text_mm0d8v52")}" | TRIGGER=${getNumeric(item, "numeric_mm0dya1d")} | SALAIRE=${getNumeric(item, "numeric_mm0fkbs")}`
         );
       });
       console.log("📊 ===== FIN ÉTAT INITIAL =====\n");
@@ -131,7 +128,7 @@ async function handleSalaireTrigger(triggerItemId, addedValue) {
 
     for (const item of items) {
       if (item.id === triggerItemId) {
-        const prev = getNumeric(item, COL_SALAIRE);
+        const prev = getNumeric(item, "numeric_mm0fkbs");
         const total = prev + addedValue;
         await updateSalaire(item.id, total);
         console.log(`➕ ${item.name} : ${prev} + ${addedValue} = ${total}`);
@@ -141,7 +138,7 @@ async function handleSalaireTrigger(triggerItemId, addedValue) {
       }
     }
   } catch (err) {
-    console.error("❌ ERREUR handleSalaireTrigger:", err.message);
+    console.error("❌ ERREUR handleSalaireTrigger :", err.message);
   }
 }
 
@@ -152,31 +149,36 @@ app.get("/", (req, res) => res.send("OK"));
 app.get("/health", (req, res) => res.send("OK"));
 
 // =========================
-// WEBHOOK MONDAY ULTRA-ROBUSTE
+// WEBHOOK MONDAY ULTRA ROBUST (COLD START SAFE)
 // =========================
 app.post("/webhook/monday", async (req, res) => {
+  // Réponse immédiate pour Monday
+  res.status(200).send("OK");
+
+  // Cold start check
+  if (isColdStart) {
+    queuedRequests.push(req);
+    logColdStart(req);
+    isColdStart = false;
+  }
+
+  // Logs immédiats pour toutes les requêtes
   console.log("\n🚨🚨🚨 WEBHOOK MONDAY REÇU 🚨🚨🚨");
-  console.log("BODY COMPLET :");
-  console.log(JSON.stringify(req.body, null, 2));
+  console.log("BODY COMPLET :", JSON.stringify(req.body, null, 2));
   console.log("🚨🚨🚨 FIN WEBHOOK 🚨🚨🚨\n");
 
   // Challenge Monday
   if (req.body.challenge) {
     console.log("🟢 CHALLENGE VALIDATION");
-    return res.status(200).json({ challenge: req.body.challenge });
-  }
-
-  res.status(200).send("OK"); // réponse rapide
-
-  // Traitement après réponse
-  const event = req.body.event || req.body.data || req.body;
-  if (!event) return;
-
-  const itemId = event.itemId || event.pulseId || event.id;
-  if (!itemId) {
-    console.warn("⚠️ Aucun itemId détecté dans l'event");
     return;
   }
+
+  // Traitement asynchrone après réponse
+  const event = req.body.event;
+  if (!event) return;
+
+  const itemId = event.itemId || event.pulseId;
+  if (!itemId) return;
 
   let numericValue = NaN;
   try {
@@ -184,22 +186,18 @@ app.post("/webhook/monday", async (req, res) => {
       numericValue = Number(JSON.parse(event.value)?.number);
     } else if (typeof event.value === "number") {
       numericValue = event.value;
-    } else if (event.value && typeof event.value === "object") {
-      numericValue = Number(event.value.number ?? event.value);
     }
-  } catch (err) {
-    console.error("❌ ERREUR parsing event.value:", err.message);
-  }
+  } catch {}
 
   console.log(`🧪 EVENT → item=${itemId} | value=${numericValue}`);
 
   if (!Number.isNaN(numericValue)) {
-    await handleSalaireTrigger(itemId, numericValue);
+    handleSalaireTrigger(itemId, numericValue); // async fire & forget
   }
 });
 
 // =========================
-// START
+// START SERVER
 // =========================
 app.listen(PORT, () => {
   console.log(`🚀 Server running on port ${PORT}`);
