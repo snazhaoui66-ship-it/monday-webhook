@@ -119,7 +119,6 @@ async function handleSalaireTrigger(triggerItemId, addedValue) {
     const res = await axiosMonday.post("", { query });
     const items = res.data.data.boards[0].items_page.items;
 
-    // 🔎 LOG INITIAL UNE SEULE FOIS
     if (!INITIAL_STATE_LOGGED) {
       console.log("\n📊 ===== ÉTAT INITIAL AVANT MODIFICATION =====");
       items.forEach(item => {
@@ -136,7 +135,6 @@ async function handleSalaireTrigger(triggerItemId, addedValue) {
       INITIAL_STATE_LOGGED = true;
     }
 
-    // 🔁 Logique métier SALAIRE
     for (const item of items) {
       if (item.id === triggerItemId) {
         const prev = getNumeric(item, COL_SALAIRE);
@@ -161,18 +159,27 @@ app.get("/", (req, res) => res.send("OK"));
 app.get("/health", (req, res) => res.send("OK"));
 
 // =========================
-// WEBHOOK MONDAY
+// WEBHOOK MONDAY (VERSION DEBUG ULTRA VISIBLE)
 // =========================
 app.post("/webhook/monday", async (req, res) => {
-  console.log("\n📩 WEBHOOK REÇU :");
-  console.log(JSON.stringify(req.body, null, 2));
 
+  console.log("\n");
+  console.log("🚨🚨🚨 WEBHOOK MONDAY REÇU 🚨🚨🚨");
+  console.log("BODY COMPLET :");
+  console.log(JSON.stringify(req.body, null, 2));
+  console.log("🚨🚨🚨 FIN WEBHOOK 🚨🚨🚨");
+  console.log("\n");
+
+  // Challenge Monday
   if (req.body.challenge) {
+    console.log("🟢 CHALLENGE VALIDATION");
     return res.status(200).json({ challenge: req.body.challenge });
   }
 
+  // Toujours répondre 200 rapidement
   res.status(200).send("OK");
 
+  // Traitement après réponse
   const event = req.body.event;
   if (!event) return;
 
