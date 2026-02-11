@@ -4,15 +4,24 @@ import dotenv from "dotenv";
 
 dotenv.config();
 
+// =========================
+// ENV CONFIG (DOIT ÊTRE AVANT UTILISATION)
+// =========================
 console.log("🚀 SERVER INSTANCE ID:", Date.now());
 
+const MONDAY_API_KEY = process.env.MONDAY_API_KEY;
+const BOARD_ID = process.env.BOARD_ID;
+const PORT = process.env.PORT || 8080;
 
-console.log("ENV MONDAY_API_KEY:", !!process.env.MONDAY_API_KEY);
-console.log("ENV BOARD_ID:", !!process.env.BOARD_ID);
-console.log("ENV PORT:", process.env.PORT);
-
+console.log("ENV MONDAY_API_KEY:", !!MONDAY_API_KEY);
+console.log("ENV BOARD_ID:", !!BOARD_ID);
+console.log("ENV PORT:", PORT);
 console.log("BOARD_ID ACTUEL:", BOARD_ID);
 
+if (!MONDAY_API_KEY || !BOARD_ID) {
+  console.error("❌ VARIABLES D'ENV MANQUANTES");
+  process.exit(1);
+}
 
 // =========================
 // EXPRESS INIT
@@ -37,19 +46,10 @@ BODY   : ${JSON.stringify(req.body, null, 2)}
 });
 
 // =========================
-// CONFIG
+// CONFIG MONDAY
 // =========================
-const PORT = process.env.PORT || 3000;
 const MONDAY_API_URL = "https://api.monday.com/v2";
-const API_KEY = process.env.MONDAY_API_KEY;
-const BOARD_ID = process.env.BOARD_ID;
 
-if (!API_KEY || !BOARD_ID) {
-  console.error("❌ VARIABLES D'ENV MANQUANTES");
-  process.exit(1);
-}
-
-// Colonnes
 const COL_FORM = "numeric_mm0d85cp";
 const COL_TEXT = "text_mm0d8v52";
 const COL_TRIGGER = "numeric_mm0dya1d";
@@ -62,7 +62,7 @@ const axiosMonday = axios.create({
   baseURL: MONDAY_API_URL,
   timeout: 15000,
   headers: {
-    Authorization: API_KEY,
+    Authorization: MONDAY_API_KEY,
     "Content-Type": "application/json",
   },
 });
@@ -73,6 +73,7 @@ const axiosMonday = axios.create({
 function getNumeric(item, colId) {
   const col = item.column_values.find(c => c.id === colId);
   if (!col) return 0;
+
   try {
     return JSON.parse(col.value)?.number ?? 0;
   } catch {
@@ -165,7 +166,7 @@ app.get("/", (req, res) => res.send("OK"));
 app.get("/health", (req, res) => res.send("OK"));
 
 // =========================
-// WEBHOOK MONDAY (VERSION DEBUG ULTRA VISIBLE)
+// WEBHOOK MONDAY
 // =========================
 app.post("/webhook/monday", async (req, res) => {
 
@@ -185,7 +186,6 @@ app.post("/webhook/monday", async (req, res) => {
   // Toujours répondre 200 rapidement
   res.status(200).send("OK");
 
-  // Traitement après réponse
   const event = req.body.event;
   if (!event) return;
 
@@ -211,7 +211,7 @@ app.post("/webhook/monday", async (req, res) => {
 });
 
 // =========================
-// START
+// START SERVER
 // =========================
 app.listen(PORT, () => {
   console.log(`🚀 Server running on port ${PORT}`);
