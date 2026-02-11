@@ -4,9 +4,15 @@ import dotenv from "dotenv";
 
 dotenv.config();
 
+console.log("🚀 SERVER INSTANCE ID:", Date.now());
+
+
 console.log("ENV MONDAY_API_KEY:", !!process.env.MONDAY_API_KEY);
 console.log("ENV BOARD_ID:", !!process.env.BOARD_ID);
 console.log("ENV PORT:", process.env.PORT);
+
+console.log("BOARD_ID ACTUEL:", BOARD_ID);
+
 
 // =========================
 // EXPRESS INIT
