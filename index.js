@@ -8,7 +8,6 @@ console.log("ENV MONDAY_API_KEY:", !!process.env.MONDAY_API_KEY);
 console.log("ENV BOARD_ID:", !!process.env.BOARD_ID);
 console.log("ENV PORT:", process.env.PORT);
 
-
 // =========================
 // EXPRESS INIT
 // =========================
@@ -28,7 +27,6 @@ BODY   : ${JSON.stringify(req.body, null, 2)}
 -------------------------------
 `;
   process.stdout.write(msg + "\n");
-  console.error(msg);
   next();
 });
 
@@ -46,9 +44,10 @@ if (!API_KEY || !BOARD_ID) {
 }
 
 // Colonnes
-const COL_FORM = "numeric_mm0d85cp";     // résultat
-const COL_TEXT = "text_mm0d8v52";        // texte (lecture)
-const COL_TRIGGER = "numeric_mm0dya1d";  // Numbers déclencheur
+const COL_FORM = "numeric_mm0d85cp";
+const COL_TEXT = "text_mm0d8v52";
+const COL_TRIGGER = "numeric_mm0dya1d";
+const COL_SALAIRE = "numeric_mm0fkbs";
 
 // =========================
 // AXIOS MONDAY
@@ -79,13 +78,13 @@ function getText(item, colId) {
   return item.column_values.find(c => c.id === colId)?.text ?? "";
 }
 
-async function updateNumeric(itemId, value) {
+async function updateSalaire(itemId, value) {
   const mutation = `
     mutation {
       change_simple_column_value(
         board_id: ${BOARD_ID},
         item_id: ${itemId},
-        column_id: "${COL_FORM}",
+        column_id: "${COL_SALAIRE}",
         value: "${Number(value)}"
       ) { id }
     }
@@ -94,14 +93,14 @@ async function updateNumeric(itemId, value) {
 }
 
 // =========================
-// FLAG GLOBAL
+// FLAG LOG UNIQUE
 // =========================
 let INITIAL_STATE_LOGGED = false;
 
 // =========================
-// LOGIQUE PRINCIPALE
+// LOGIQUE PRINCIPALE SALAIRE
 // =========================
-async function handleTextTrigger(triggerItemId, addedValue) {
+async function handleSalaireTrigger(triggerItemId, addedValue) {
   try {
     const query = `
       query {
@@ -116,35 +115,42 @@ async function handleTextTrigger(triggerItemId, addedValue) {
         }
       }
     `;
+
     const res = await axiosMonday.post("", { query });
     const items = res.data.data.boards[0].items_page.items;
 
-    // 🔎 Log initial
+    // 🔎 LOG INITIAL UNE SEULE FOIS
     if (!INITIAL_STATE_LOGGED) {
-      console.log("\n📊 ===== ÉTAT INITIAL DU BOARD =====");
+      console.log("\n📊 ===== ÉTAT INITIAL AVANT MODIFICATION =====");
       items.forEach(item => {
         console.log(
-          `• ${item.name} | COL_FORM=${getNumeric(item, COL_FORM)} | COL_TEXT="${getText(item, COL_TEXT)}"`
+          `• ${item.name}
+             FORM=${getNumeric(item, COL_FORM)}
+             TEXT="${getText(item, COL_TEXT)}"
+             TRIGGER=${getNumeric(item, COL_TRIGGER)}
+             SALAIRE=${getNumeric(item, COL_SALAIRE)}
+          `
         );
       });
       console.log("📊 ===== FIN ÉTAT INITIAL =====\n");
       INITIAL_STATE_LOGGED = true;
     }
 
-    // 🔁 Logique métier
+    // 🔁 Logique métier SALAIRE
     for (const item of items) {
       if (item.id === triggerItemId) {
-        const prev = getNumeric(item, COL_FORM);
+        const prev = getNumeric(item, COL_SALAIRE);
         const total = prev + addedValue;
-        await updateNumeric(item.id, total);
+        await updateSalaire(item.id, total);
         console.log(`➕ ${item.name} : ${prev} + ${addedValue} = ${total}`);
       } else {
-        await updateNumeric(item.id, 0);
+        await updateSalaire(item.id, 0);
         console.log(`🔁 RESET ${item.name} → 0`);
       }
     }
+
   } catch (err) {
-    console.error("❌ ERREUR handleTextTrigger :", err.message);
+    console.error("❌ ERREUR handleSalaireTrigger :", err.message);
   }
 }
 
@@ -155,87 +161,40 @@ app.get("/", (req, res) => res.send("OK"));
 app.get("/health", (req, res) => res.send("OK"));
 
 // =========================
-// WEBHOOK MONDAY ULTRA-ROBUSTE
+// WEBHOOK MONDAY
 // =========================
 app.post("/webhook/monday", async (req, res) => {
-  console.log("\n📩 WEBHOOK CRU (BRUT) :");
+  console.log("\n📩 WEBHOOK REÇU :");
   console.log(JSON.stringify(req.body, null, 2));
 
-  // ✅ Challenge Monday
   if (req.body.challenge) {
-    console.log("🟢 Challenge Monday détecté");
     return res.status(200).json({ challenge: req.body.challenge });
   }
 
-  // ⚡ Réponse immédiate
   res.status(200).send("OK");
 
-  // 🔍 Extraction robuste de l’event
-  const body = req.body || {};
-  const event = body.event || body.data || body; // fallback
-  if (!event) {
-    console.log("⚠️ Aucun event détecté dans le body");
-    return;
-  }
+  const event = req.body.event;
+  if (!event) return;
 
-  // Extraction itemId robuste
-  const itemId =
-    event.itemId ||
-    event.pulseId ||
-    event.data?.id ||
-    event.id ||
-    event.pulse?.id ||
-    null;
+  const itemId = event.itemId || event.pulseId;
+  if (!itemId) return;
 
-  if (!itemId) {
-    console.log("⚠️ Aucun itemId détecté dans l'event :", event);
-    return;
-  }
-
-  // Extraction valeur robuste
   let numericValue = NaN;
+
   try {
     if (typeof event.value === "string") {
       const parsed = JSON.parse(event.value);
-      numericValue = Number(parsed?.number ?? parsed ?? NaN);
+      numericValue = Number(parsed?.number);
     } else if (typeof event.value === "number") {
       numericValue = event.value;
-    } else if (event.value && typeof event.value === "object") {
-      numericValue = Number(event.value.number ?? event.value);
     }
-  } catch (err) {
-    console.log("❌ Erreur parsing value :", err.message);
-  }
+  } catch {}
 
-  console.log(
-    `🧪 EVENT → item=${itemId} | raw=${JSON.stringify(event.value)} | parsed=${numericValue}`
-  );
+  console.log(`🧪 EVENT → item=${itemId} | value=${numericValue}`);
 
   if (!Number.isNaN(numericValue)) {
-    console.log(`🎯 TRIGGER CONFIRMÉ → Item ${itemId}`);
-    await handleTextTrigger(itemId, numericValue);
-  } else {
-    console.log("⚠️ Valeur non numérique ignorée");
+    await handleSalaireTrigger(itemId, numericValue);
   }
-});
-
-// =========================
-// DEBUG ENDPOINT
-// =========================
-app.all("/debug", (req, res) => {
-  const msg = `
-🧨 DEBUG ENDPOINT HIT 🧨
-METHOD : ${req.method}
-URL    : ${req.originalUrl}
-HEADERS: ${JSON.stringify(req.headers)}
-BODY   : ${JSON.stringify(req.body, null, 2)}
-QUERY  : ${JSON.stringify(req.query)}
-🧨 END DEBUG 🧨
-`;
-  process.stdout.write(msg + "\n");
-  console.error(msg);
-
-  res.status(200).json({ ok: true });
 });
 
 // =========================
