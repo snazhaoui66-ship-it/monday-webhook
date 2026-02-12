@@ -145,7 +145,10 @@ async function handleSalaireTrigger(triggerItemId, addedValue) {
 // =========================
 // ROUTES
 // =========================
-app.get("/", (req, res) => res.send("OK"));
+app.get("/", (req, res) => {
+  res.send("INSTANCE: " + INSTANCE_ID);
+});
+
 app.get("/health", (req, res) => res.send("OK"));
 
 // =========================
